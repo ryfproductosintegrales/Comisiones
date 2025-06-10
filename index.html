@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestor de Ventas y Comisiones</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+    <!-- Chosen Palette: Warm Neutral (Tailwind Stone) -->
+    <!-- Application Structure Plan: A task-oriented SPA dashboard for a single user, fully self-contained with IndexedDB for offline data persistence. The main view displays current period statistics (KPIs, sales list) and a sales input form. The "Close Period" action is flexible. A "Reset All Data" button allows complete data wipe. A dedicated view lists historical reports. A new user preference (includeClientDetailsInReport) is introduced and saved to IndexedDB, allowing dynamic control over client detail visibility in reports. This structure supports flexible daily sales recording, real-time progress, on-demand summary generation, and now, customizable report content. -->
+    <!-- Visualization & Content Choices: Dashboard KPIs (HTML/CSS) provide immediate feedback on sales, profit, and bonus. A simple progress bar (HTML/CSS) offers a visual cue for bonus targets. A dynamic HTML table lists individual sales for detailed tracking. Upon report generation, Chart.js bar and donut charts are created on canvas to visualize sales mix by combo type and profit contribution. The client sales breakdown is now conditionally rendered based on user preference. All interactions (adding sales, flexible period closing, data reset, view switching, preference saving) are handled with vanilla JS, directly updating the DOM, for a fluid user experience. This combination of static information, dynamic tables, and summary charts effectively translates the user's requirements into a portable, interactive, and fully controllable tool with customizable output. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            max-height: 400px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+            }
+        }
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            #reporte-imprimible, #reporte-imprimible * {
+                visibility: visible;
+            }
+            #reporte-imprimible {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+            }
+            .no-print {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body class="bg-stone-50 text-stone-800">
+
+    <div id="app-container" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-stone-900">Gestor de Ventas y Comisiones</h1>
+            <p class="mt-2 text-lg text-stone-600">Tu asistente personal para el seguimiento de rendimiento.</p>
+        </header>
+
+        <div id="loading" class="text-center py-10">
+            <p class="text-xl font-semibold">Cargando datos...</p>
+        </div>
+
+        <main id="main-content" class="hidden">
+
+            <div class="mb-6 flex justify-center space-x-2">
+                <button id="btn-vista-actual" class="py-2 px-5 bg-teal-600 text-white font-semibold rounded-lg shadow-md hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-opacity-75">Período Actual</button>
+                <button id="btn-vista-historial" class="py-2 px-5 bg-white text-stone-700 font-semibold rounded-lg shadow-md hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-opacity-75">Historial de Reportes</button>
+            </div>
+
+            <!-- VISTA PERIODO ACTUAL -->
+            <div id="vista-actual">
+                <div class="text-center mb-8 p-4 bg-white rounded-xl shadow">
+                    <h2 class="text-2xl font-bold text-stone-800">Resumen del Período Actual</h2>
+                    <p id="periodo-fechas" class="text-stone-500">Cargando fechas...</p>
+                </div>
+
+                <!-- KPIs -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    <div class="bg-white p-6 rounded-xl shadow transform hover:scale-105 transition-transform">
+                        <h3 class="text-stone-500 font-medium">Ventas Totales</h3>
+                        <p id="kpi-ventas" class="text-3xl font-bold text-teal-600">$0</p>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow transform hover:scale-105 transition-transform">
+                        <h3 class="text-stone-500 font-medium">Frascos Vendidos</h3>
+                        <p id="kpi-frascos" class="text-3xl font-bold text-sky-600">0</p>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow transform hover:scale-105 transition-transform">
+                        <h3 class="text-stone-500 font-medium">Beneficio Total</h3>
+                        <p id="kpi-beneficio" class="text-3xl font-bold text-amber-600">$0</p>
+                    </div>
+                    <div class="bg-white p-6 rounded-xl shadow transform hover:scale-105 transition-transform">
+                        <h3 class="text-stone-500 font-medium">Bono Acumulado</h3>
+                        <p id="kpi-bono" class="text-3xl font-bold text-lime-600">$0</p>
+                    </div>
+                </div>
+
+                <!-- Progreso de Bono -->
+                <div class="bg-white p-6 rounded-xl shadow mb-8">
+                    <h3 class="text-lg font-semibold mb-2">Progreso para Próximo Bono</h3>
+                    <div class="w-full bg-stone-200 rounded-full h-4">
+                        <div id="bono-progress-bar" class="bg-sky-500 h-4 rounded-full transition-all duration-500" style="width: 0%;"></div>
+                    </div>
+                    <p id="bono-progress-text" class="text-center text-sm text-stone-600 mt-2">0 frascos vendidos.</p>
+                </div>
+
+                <!-- Formulario de Venta y Acción de Cierre -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+                    <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow">
+                        <h3 class="text-xl font-bold mb-4">Registrar Nueva Venta</h3>
+                        <form id="form-venta" class="space-y-4">
+                            <div>
+                                <label for="cliente" class="block text-sm font-medium text-stone-700">Nombre del Cliente (Opcional)</label>
+                                <input type="text" id="cliente" class="mt-1 block w-full px-3 py-2 bg-white border border-stone-300 rounded-md shadow-sm focus:outline-none focus:ring-teal-500 focus:border-teal-500">
+                            </div>
+                            <div>
+                                <label for="tipo-venta" class="block text-sm font-medium text-stone-700">Tipo de Venta</label>
+                                <select id="tipo-venta" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-stone-300 focus:outline-none focus:ring-teal-500 focus:border-teal-500 sm:text-sm rounded-md">
+                                    <option value="1">1 Frasco - $2,000</option>
+                                    <option value="2">2 Frascos - $3,300</option>
+                                    <option value="3">3 Frascos - $4,000</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500">
+                                Añadir Venta
+                            </button>
+                        </form>
+                    </div>
+                    <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow flex flex-col justify-center items-center text-center">
+                        <h3 class="text-xl font-bold mb-4">Gestionar Período</h3>
+                        <p class="text-stone-600 mb-4">Puedes cerrar el período actual en cualquier momento para generar un reporte y empezar uno nuevo.</p>
+                        <div class="flex items-center mb-4">
+                            <input type="checkbox" id="incluir-clientes-reporte" class="h-4 w-4 text-teal-600 border-stone-300 rounded focus:ring-teal-500">
+                            <label for="incluir-clientes-reporte" class="ml-2 text-sm font-medium text-stone-700">Incluir detalles de clientes en el reporte</label>
+                        </div>
+                        <button id="btn-cerrar-periodo" class="py-3 px-6 bg-rose-600 text-white font-semibold rounded-lg shadow-md hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-opacity-75">
+                            Cerrar Período y Generar Reporte
+                        </button>
+                        <button id="btn-reiniciar-datos" class="mt-4 py-2 px-4 bg-stone-500 text-white font-semibold rounded-lg shadow-md hover:bg-stone-600 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-opacity-75">
+                            Reiniciar Todos los Datos (Borrar Historial)
+                        </button>
+                        <p id="cierre-periodo-aviso" class="text-sm text-stone-500 mt-2">Los períodos cerrados se guardarán en el historial.</p>
+                    </div>
+                </div>
+
+                <!-- Lista de Ventas -->
+                <div class="bg-white p-6 rounded-xl shadow">
+                    <h3 class="text-xl font-bold mb-4">Ventas del Período Actual</h3>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-stone-200">
+                            <thead class="bg-stone-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Fecha</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Cliente</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Tipo Venta</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">Frascos</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">Venta</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">Beneficio</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabla-ventas-body" class="bg-white divide-y divide-stone-200">
+                                <!-- Filas de ventas se insertan aquí -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VISTA HISTORIAL DE REPORTES -->
+            <div id="vista-historial" class="hidden">
+                 <div class="text-center mb-8 p-4 bg-white rounded-xl shadow">
+                    <h2 class="text-2xl font-bold text-stone-800">Historial de Reportes Quincenales</h2>
+                    <p class="text-stone-500">Aquí puedes ver los resúmenes de períodos anteriores.</p>
+                </div>
+                <div id="historial-container" class="bg-white p-6 rounded-xl shadow">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-stone-200">
+                             <thead class="bg-stone-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">Período</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">Ventas Totales</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">Frascos Vendidos</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">Beneficio Total</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-stone-500 uppercase tracking-wider">Bono Total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabla-historial-body" class="bg-white divide-y divide-stone-200">
+                                <!-- Filas de historial se insertan aquí -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal para Reporte -->
+    <div id="reporte-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div id="reporte-imprimible" class="p-8">
+                <h2 class="text-3xl font-bold text-center mb-2">Reporte Quincenal</h2>
+                <p id="reporte-periodo-fechas" class="text-center text-stone-600 mb-8">...</p>
+                
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8 text-center">
+                    <div class="bg-stone-100 p-4 rounded-lg">
+                        <h4 class="font-semibold">Ventas Totales</h4>
+                        <p id="reporte-ventas" class="text-2xl font-bold text-teal-600">$0</p>
+                    </div>
+                    <div class="bg-stone-100 p-4 rounded-lg">
+                        <h4 class="font-semibold">Frascos Vendidos</h4>
+                        <p id="reporte-frascos" class="text-2xl font-bold text-sky-600">0</p>
+                    </div>
+                    <div class="bg-stone-100 p-4 rounded-lg">
+                        <h4 class="font-semibold">Beneficio Total</h4>
+                        <p id="reporte-beneficio" class="text-2xl font-bold text-amber-600">$0</p>
+                    </div>
+                    <div class="bg-stone-100 p-4 rounded-lg">
+                        <h4 class="font-semibold">Bono Ganado</h4>
+                        <p id="reporte-bono" class="text-2xl font-bold text-lime-600">$0</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                    <div>
+                        <h4 class="text-xl font-bold text-center mb-4">Desglose de Combos Vendidos</h4>
+                        <div class="chart-container">
+                            <canvas id="combo-chart"></canvas>
+                        </div>
+                    </div>
+                    <div id="reporte-clientes-section" class="flex flex-col">
+                        <h4 class="text-xl font-bold text-center mb-4">Desglose de Ventas por Cliente</h4>
+                        <div id="reporte-ventas-cliente" class="max-h-80 overflow-y-auto pr-2">
+                           <!-- Data por cliente aquí -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="p-4 bg-stone-50 border-t flex justify-end space-x-2 no-print">
+                <button id="btn-imprimir-reporte" class="py-2 px-4 bg-sky-600 text-white font-semibold rounded-lg shadow-md hover:bg-sky-700">Imprimir</button>
+                <button id="btn-descargar-pdf" class="py-2 px-4 bg-emerald-600 text-white font-semibold rounded-lg shadow-md hover:bg-emerald-700">Descargar PDF</button>
+                <button id="btn-cerrar-modal" class="py-2 px-4 bg-stone-600 text-white font-semibold rounded-lg shadow-md hover:bg-stone-700">Cerrar</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // IndexedDB specific constants
+        const DB_NAME = 'SalesTrackerDB';
+        const DB_VERSION = 2; // Incremented version for new 'settings' store
+        const STORE_NAME_PERIODS = 'periods';
+        const STORE_NAME_SETTINGS = 'settings'; // New store for user settings
+
+        let db; // IndexedDB database instance
+        let activePeriod = null; // Currently active sales period object
+        let salesData = []; // Array of sales for the current period
+        let comboChartInstance = null; // Chart.js instance for combo sales
+        let historicalPeriods = []; // Array of closed historical periods
+        let userSettings = { includeClientDetailsInReport: true }; // Default setting
+
+        // Sale definitions and their values
+        const VENTA_DEFINITIONS = {
+            '1': { frascos: 1, valor: 2000, beneficio: 200, label: '1 Frasco' },
+            '2': { frascos: 2, valor: 3300, beneficio: 300, label: '2 Frascos' },
+            '3': { frascos: 3, valor: 4000, beneficio: 400, label: '3 Frascos' },
+        };
+
+        // Utility function to format currency
+        function formatCurrency(value) {
+            return `$${new Intl.NumberFormat('es-DO').format(value)}`;
+        }
+
+        // Utility function to format dates
+        function formatDate(date) {
+            if (!(date instanceof Date)) {
+                date = new Date(date); // Convert timestamp from IndexedDB to Date object
+            }
+            return new Intl.DateTimeFormat('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+        }
+
+        // Calculates the bonus based on total flasks sold
+        function calculateBonus(totalFrascos) {
+            if (totalFrascos < 50) return 0;
+            if (totalFrascos >= 50 && totalFrascos < 75) return 500;
+            if (totalFrascos >= 75 && totalFrascos < 100) return 1000;
+            if (totalFrascos >= 100) {
+                const extraBatches = Math.floor((totalFrascos - 100) / 25);
+                return 1500 + (extraBatches * 500);
+            }
+            return 0;
+        }
+
+        // Determines the next bonus tier for progress tracking
+        function calculateNextBonusTier(totalFrascos) {
+            if (totalFrascos < 50) return 50;
+            if (totalFrascos < 75) return 75;
+            if (totalFrascos < 100) return 100;
+            return 100 + (Math.floor((totalFrascos - 100) / 25) + 1) * 25;
+        }
+
+        // IndexedDB Helper Functions
+        // Opens the IndexedDB database
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+                request.onupgradeneeded = (event) => {
+                    db = event.target.result;
+                    // Create object store for periods if it doesn't exist
+                    if (!db.objectStoreNames.contains(STORE_NAME_PERIODS)) {
+                        db.createObjectStore(STORE_NAME_PERIODS, { keyPath: 'id' });
+                    }
+                    // Create object store for settings if it doesn't exist
+                    if (!db.objectStoreNames.contains(STORE_NAME_SETTINGS)) {
+                        db.createObjectStore(STORE_NAME_SETTINGS, { keyPath: 'id' });
+                    }
+                };
+
+                request.onsuccess = (event) => {
+                    db = event.target.result;
+                    resolve(db);
+                };
+
+                request.onerror = (event) => {
+                    console.error("IndexedDB error:", event.target.errorCode);
+                    reject('Error opening IndexedDB');
+                };
+            });
+        }
+
+        // Saves (adds or updates) a period in IndexedDB
+        async function savePeriod(periodData) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME_PERIODS], 'readwrite');
+                const store = transaction.objectStore(STORE_NAME_PERIODS);
+                const request = store.put(periodData); 
+
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => reject(event.target.error);
+            });
+        }
+
+        // Retrieves all periods from IndexedDB that match a given status
+        async function getAllPeriodsByStatus(status) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME_PERIODS], 'readonly');
+                const store = transaction.objectStore(STORE_NAME_PERIODS);
+                const request = store.openCursor(); // Open a cursor to iterate through all objects
+                const periods = [];
+
+                request.onsuccess = (event) => {
+                    const cursor = event.target.result;
+                    if (cursor) {
+                        if (cursor.value.status === status) {
+                            periods.push(cursor.value);
+                        }
+                        cursor.continue(); // Move to the next object
+                    } else {
+                        resolve(periods); // No more objects, resolve with the collected periods
+                    }
+                };
+                request.onerror = (event) => reject(event.target.error);
+            });
+        }
+
+        // Clears all data from the periods object store in IndexedDB
+        async function clearAllPeriods() {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME_PERIODS, STORE_NAME_SETTINGS], 'readwrite');
+                const periodsStore = transaction.objectStore(STORE_NAME_PERIODS);
+                const settingsStore = transaction.objectStore(STORE_NAME_SETTINGS);
+
+                periodsStore.clear(); // Clear all objects in the periods store
+                settingsStore.clear(); // Clear all objects in the settings store
+
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = (event) => reject(event.target.error);
+            });
+        }
+
+        // Saves a setting to the settings object store
+        async function saveSetting(settingId, value) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME_SETTINGS], 'readwrite');
+                const store = transaction.objectStore(STORE_NAME_SETTINGS);
+                const request = store.put({ id: settingId, value: value });
+
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => reject(event.target.error);
+            });
+        }
+
+        // Gets a setting from the settings object store
+        async function getSetting(settingId) {
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_NAME_SETTINGS], 'readonly');
+                const store = transaction.objectStore(STORE_NAME_SETTINGS);
+                const request = store.get(settingId);
+
+                request.onsuccess = () => resolve(request.result ? request.result.value : null);
+                request.onerror = (event) => reject(event.target.error);
+            });
+        }
+
+
+        // UI Update Functions
+        // Updates the KPI (Key Performance Indicator) displays
+        function updateUI() {
+            let totalVentas = 0;
+            let totalFrascos = 0;
+            let totalBeneficio = 0;
+
+            salesData.forEach(sale => {
+                totalVentas += sale.valor;
+                totalFrascos += sale.frascos;
+                totalBeneficio += sale.beneficio;
+            });
+            
+            const totalBono = calculateBonus(totalFrascos);
+
+            document.getElementById('kpi-ventas').textContent = formatCurrency(totalVentas);
+            document.getElementById('kpi-frascos').textContent = totalFrascos;
+            document.getElementById('kpi-beneficio').textContent = formatCurrency(totalBeneficio);
+            document.getElementById('kpi-bono').textContent = formatCurrency(totalBono);
+
+            const nextBonusTier = calculateNextBonusTier(totalFrascos);
+            const prevBonusTier = nextBonusTier === 50 ? 0 : (nextBonusTier === 75 ? 50 : (nextBonusTier === 100 ? 75 : 100 + (Math.floor((totalFrascos - 100) / 25)) * 25));
+
+            const progressValue = totalFrascos - prevBonusTier;
+            const tierRange = nextBonusTier - prevBonusTier;
+            const progressPercentage = (tierRange > 0) ? (progressValue / tierRange) * 100 : 100; 
+
+            document.getElementById('bono-progress-bar').style.width = `${Math.min(100, progressPercentage)}%`;
+            document.getElementById('bono-progress-text').textContent = `${totalFrascos} frascos vendidos. Próximo bono en ${nextBonusTier} frascos.`;
+
+            renderSalesTable();
+        }
+
+        // Renders the table of sales for the current period
+        function renderSalesTable() {
+            const tbody = document.getElementById('tabla-ventas-body');
+            tbody.innerHTML = '';
+            if (salesData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-stone-500">Aún no hay ventas en este período.</td></tr>';
+                return;
+            }
+            salesData.forEach(sale => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-900">${formatDate(sale.fecha)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-500">${sale.cliente || 'N/A'}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-500">${VENTA_DEFINITIONS[sale.tipo].label}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-500 text-right">${sale.frascos}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-500 text-right">${formatCurrency(sale.valor)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-900 font-semibold text-right">${formatCurrency(sale.beneficio)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+        
+        // Event handler for adding a new sale
+        async function handleAddSale(e) {
+            e.preventDefault();
+            const cliente = document.getElementById('cliente').value.trim();
+            const tipoVenta = document.getElementById('tipo-venta').value;
+            const ventaDef = VENTA_DEFINITIONS[tipoVenta];
+
+            const newSale = {
+                id: crypto.randomUUID(),
+                fecha: new Date().getTime(), // Store current timestamp
+                cliente,
+                tipo: tipoVenta,
+                ...ventaDef
+            };
+            
+            salesData.push(newSale);
+            activePeriod.sales.push(newSale);
+
+            try {
+                await savePeriod(activePeriod);
+                updateUI();
+                document.getElementById('form-venta').reset();
+            } catch (error) {
+                console.error("Error saving sale:", error);
+                // Revert changes if saving fails
+                salesData.pop(); 
+                activePeriod.sales.pop();
+                alert("Hubo un error al guardar la venta. Por favor, inténtalo de nuevo.");
+            }
+        }
+
+        // Event handler for closing the current period and generating a report
+        async function handleClosePeriod() {
+            if (!confirm("¿Estás seguro de que quieres cerrar el período actual y generar el reporte? Se iniciará un nuevo período.")) {
+                return;
+            }
+
+            let totalVentas = 0, totalFrascos = 0, totalBeneficio = 0;
+            const comboCounts = { '1': 0, '2': 0, '3': 0 };
+
+            activePeriod.sales.forEach(sale => {
+                totalVentas += sale.valor;
+                totalFrascos += sale.frascos;
+                totalBeneficio += sale.beneficio;
+                if (comboCounts.hasOwnProperty(sale.tipo)) {
+                    comboCounts[sale.tipo]++;
+                }
+            });
+            const totalBono = calculateBonus(totalFrascos);
+
+            const summary = { totalVentas, totalFrascos, totalBeneficio, totalBono, comboCounts };
+
+            const currentClosureDate = new Date();
+            currentClosureDate.setHours(23, 59, 59, 999); // Set to end of current day
+
+            const oldPeriodData = {
+                ...activePeriod,
+                endDate: currentClosureDate.getTime(), // Actual end date for the closed period
+                status: 'closed',
+                summary: summary
+            };
+
+            const newPeriodStartDate = new Date(currentClosureDate);
+            newPeriodStartDate.setDate(newPeriodStartDate.getDate() + 1); // Start next day
+            newPeriodStartDate.setHours(0, 0, 0, 0); // Normalize to start of day
+            const newPeriodEndDate = new Date(newPeriodStartDate);
+            newPeriodEndDate.setDate(newPeriodEndDate.getDate() + 14); // Next 15 days
+            newPeriodEndDate.setHours(23, 59, 59, 999); // Normalize to end of day
+
+            const newPeriodId = `period_${newPeriodStartDate.toISOString().split('T')[0]}`;
+            const newPeriodData = {
+                id: newPeriodId,
+                startDate: newPeriodStartDate.getTime(),
+                endDate: newPeriodEndDate.getTime(),
+                status: 'active',
+                sales: []
+            };
+
+            try {
+                await savePeriod(oldPeriodData);
+                await savePeriod(newPeriodData);
+
+                showReportModal(oldPeriodData); // Show report for the just-closed period
+                
+                activePeriod = newPeriodData; // Set the new period as active
+                salesData = []; // Clear sales data for the new period
+                updateUI();
+                setPeriodDates(); // Update period dates display
+                fetchHistoricalPeriods(); // Refresh historical reports list
+
+            } catch (error) {
+                console.error("Error closing period:", error);
+                alert("Hubo un error al cerrar el período.");
+            }
+        }
+
+        // Event handler for resetting all data
+        async function handleResetData() {
+            if (!confirm("ADVERTENCIA: ¿Estás seguro de que quieres BORRAR TODOS los datos (períodos actuales e históricos)? Esta acción es IRREVERSIBLE.")) {
+                return;
+            }
+            try {
+                await clearAllPeriods();
+                // Re-initialize the app to start fresh
+                await init(); 
+                alert("Todos los datos han sido reiniciados.");
+            } catch (error) {
+                console.error("Error resetting data:", error);
+                alert("Hubo un error al reiniciar los datos.");
+            }
+        }
+
+        // Displays the report modal with period summary and charts
+        async function showReportModal(periodData) {
+            const summary = periodData.summary;
+            document.getElementById('reporte-periodo-fechas').textContent = `Período: ${formatDate(periodData.startDate)} - ${formatDate(periodData.endDate)}`;
+            document.getElementById('reporte-ventas').textContent = formatCurrency(summary.totalVentas);
+            document.getElementById('reporte-frascos').textContent = summary.totalFrascos;
+            document.getElementById('reporte-beneficio').textContent = formatCurrency(summary.totalBeneficio);
+            document.getElementById('reporte-bono').textContent = formatCurrency(summary.totalBono);
+
+            const comboLabels = Object.values(VENTA_DEFINITIONS).map(v => v.label);
+            const comboData = Object.keys(VENTA_DEFINITIONS).map(key => summary.comboCounts[key] || 0);
+
+            const ctx = document.getElementById('combo-chart').getContext('2d');
+            if (comboChartInstance) {
+                comboChartInstance.destroy(); // Destroy previous chart instance if exists
+            }
+            comboChartInstance = new Chart(ctx, {
+                type: 'bar', // Bar chart for combo breakdown
+                data: {
+                    labels: comboLabels,
+                    datasets: [{
+                        label: '# de Combos Vendidos',
+                        data: comboData,
+                        backgroundColor: ['rgba(20, 184, 166, 0.6)', 'rgba(14, 165, 233, 0.6)', 'rgba(234, 179, 8, 0.6)'],
+                        borderColor: ['rgb(20, 184, 166)', 'rgb(14, 165, 233)', 'rgb(234, 179, 8)'],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false, // Allow chart to fill container
+                    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+                }
+            });
+            
+            const clientSection = document.getElementById('reporte-clientes-section');
+            const includeClients = userSettings.includeClientDetailsInReport; // Get current setting
+
+            if (includeClients) {
+                clientSection.classList.remove('hidden');
+                const salesByClient = periodData.sales.reduce((acc, sale) => {
+                    const clientName = sale.cliente || 'Cliente Anónimo';
+                    if (!acc[clientName]) {
+                        acc[clientName] = { sales: 0, jars: 0 };
+                    }
+                    acc[clientName].sales += sale.valor;
+                    acc[clientName].jars += sale.frascos;
+                    return acc;
+                }, {});
+
+                const clientContainer = document.getElementById('reporte-ventas-cliente');
+                clientContainer.innerHTML = '';
+                const sortedClients = Object.entries(salesByClient).sort(([, a], [, b]) => b.sales - a.sales);
+
+                if (sortedClients.length === 0) {
+                    clientContainer.innerHTML = '<p class="text-center text-stone-500">No hay ventas registradas por cliente.</p>';
+                } else {
+                    sortedClients.forEach(([name, data]) => {
+                        const div = document.createElement('div');
+                        div.className = 'flex justify-between items-center p-2 border-b';
+                        div.innerHTML = `
+                            <span class="font-medium">${name}</span>
+                            <span class="text-sm text-stone-600">${formatCurrency(data.sales)} (${data.jars} frascos)</span>
+                        `;
+                        clientContainer.appendChild(div);
+                    });
+                }
+            } else {
+                clientSection.classList.add('hidden'); // Hide the client details section
+            }
+
+            document.getElementById('reporte-modal').classList.remove('hidden');
+        }
+        
+        // Switches between 'Current Period' and 'Historical Reports' views
+        function switchView(view) {
+            if (view === 'historial') {
+                document.getElementById('vista-actual').classList.add('hidden');
+                document.getElementById('vista-historial').classList.remove('hidden');
+                document.getElementById('btn-vista-historial').classList.add('bg-teal-600', 'text-white');
+                document.getElementById('btn-vista-historial').classList.remove('bg-white', 'text-stone-700');
+                document.getElementById('btn-vista-actual').classList.add('bg-white', 'text-stone-700');
+                document.getElementById('btn-vista-actual').classList.remove('bg-teal-600', 'text-white');
+            } else {
+                document.getElementById('vista-historial').classList.add('hidden');
+                document.getElementById('vista-actual').classList.remove('hidden');
+                document.getElementById('btn-vista-actual').classList.add('bg-teal-600', 'text-white');
+                document.getElementById('btn-vista-actual').classList.remove('bg-white', 'text-stone-700');
+                document.getElementById('btn-vista-historial').classList.add('bg-white', 'text-stone-700');
+                document.getElementById('btn-vista-historial').classList.remove('bg-teal-600', 'text-white');
+            }
+        }
+        
+        // Fetches and displays historical periods from IndexedDB
+        async function fetchHistoricalPeriods() {
+            try {
+                historicalPeriods = await getAllPeriodsByStatus('closed');
+                renderHistoricalTable();
+            } catch (error) {
+                console.error("Error fetching historical periods:", error);
+                alert("Hubo un error al cargar los reportes históricos.");
+            }
+        }
+        
+        // Renders the table of historical reports
+        function renderHistoricalTable() {
+            const tbody = document.getElementById('tabla-historial-body');
+            tbody.innerHTML = '';
+            if (historicalPeriods.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-stone-500">No hay reportes históricos.</td></tr>';
+                return;
+            }
+            
+            historicalPeriods.sort((a,b) => b.startDate - a.startDate); // Sort by start date (descending)
+
+            historicalPeriods.forEach(period => {
+                const summary = period.summary;
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-stone-50 cursor-pointer"; // Make rows clickable
+                tr.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-900">${formatDate(period.startDate)} - ${formatDate(period.endDate)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-500 text-right">${formatCurrency(summary.totalVentas)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-500 text-right">${summary.totalFrascos}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-500 text-right">${formatCurrency(summary.totalBeneficio)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-stone-900 font-semibold text-right">${formatCurrency(summary.totalBono)}</td>
+                `;
+                tr.addEventListener('click', () => showReportModal(period)); // Add click event to show report
+                tbody.appendChild(tr);
+            });
+        }
+        
+        // Sets the displayed dates for the current period
+        function setPeriodDates() {
+            if(activePeriod) {
+                const startDateStr = formatDate(activePeriod.startDate);
+                const endDateStr = formatDate(activePeriod.endDate);
+                document.getElementById('periodo-fechas').textContent = `Del ${startDateStr} al ${endDateStr}`;
+            }
+        }
+
+        // Initializes the application, loads active period or creates a new one
+        async function init() {
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('main-content').classList.add('hidden');
+
+            try {
+                await openDB(); // Ensure IndexedDB is open
+
+                // Load user settings
+                const loadedSettings = await getSetting('user_preferences');
+                if (loadedSettings !== null) {
+                    userSettings = loadedSettings;
+                }
+                document.getElementById('incluir-clientes-reporte').checked = userSettings.includeClientDetailsInReport;
+
+                const activePeriods = await getAllPeriodsByStatus('active');
+
+                if (activePeriods.length === 0) {
+                    // No active period found, create a new one starting today
+                    const startDate = new Date();
+                    startDate.setHours(0, 0, 0, 0);
+                    const endDate = new Date(startDate);
+                    endDate.setDate(endDate.getDate() + 14); // Project 15 days from start
+                    endDate.setHours(23, 59, 59, 999);
+
+                    const newPeriodId = `period_${startDate.toISOString().split('T')[0]}`;
+                    activePeriod = {
+                        id: newPeriodId,
+                        startDate: startDate.getTime(), // Store as timestamp
+                        endDate: endDate.getTime(),     // Store as timestamp
+                        status: 'active',
+                        sales: []
+                    };
+                    await savePeriod(activePeriod);
+                    salesData = [];
+                } else {
+                    activePeriod = activePeriods[0]; // Use the existing active period
+                    salesData = activePeriod.sales || [];
+                }
+
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('main-content').classList.remove('hidden');
+
+                setPeriodDates();
+                updateUI();
+                fetchHistoricalPeriods(); // Load historical data on init
+
+            } catch (error) {
+                console.error("Initialization error:", error);
+                document.getElementById('loading').innerHTML = `<p class="text-red-500 font-bold">Error al inicializar la aplicación: ${error.message}. Asegúrate de que tu navegador soporta IndexedDB.</p>`;
+            }
+        }
+        
+        window.jsPDF = window.jspdf.jsPDF; // Make jsPDF globally available for html2canvas to use it
+
+        // Attaches event listeners once the DOM is fully loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            init(); // Initialize the application
+            document.getElementById('form-venta').addEventListener('submit', handleAddSale);
+            document.getElementById('btn-cerrar-periodo').addEventListener('click', handleClosePeriod);
+            document.getElementById('btn-reiniciar-datos').addEventListener('click', handleResetData); // New reset button listener
+            document.getElementById('btn-cerrar-modal').addEventListener('click', () => document.getElementById('reporte-modal').classList.add('hidden'));
+            document.getElementById('btn-imprimir-reporte').addEventListener('click', () => window.print());
+            document.getElementById('btn-descargar-pdf').addEventListener('click', () => {
+                const reportElement = document.getElementById('reporte-imprimible');
+                html2canvas(reportElement, { scale: 2 }).then(canvas => {
+                    const imgData = canvas.toDataURL('image/png');
+                    const pdf = new jsPDF('p', 'mm', 'a4');
+                    const pdfWidth = pdf.internal.pageSize.getWidth();
+                    const pdfHeight = pdf.internal.pageSize.getHeight();
+                    const canvasWidth = canvas.width;
+                    const canvasHeight = canvas.height;
+                    const ratio = canvasWidth / canvasHeight;
+                    const width = pdfWidth;
+                    const height = width / ratio;
+                    pdf.addImage(imgData, 'PNG', 0, 0, width, height > pdfHeight ? pdfHeight : height);
+                    pdf.save(`reporte_quincenal_${activePeriod.id}.pdf`);
+                });
+            });
+
+            document.getElementById('btn-vista-actual').addEventListener('click', () => switchView('actual'));
+            document.getElementById('btn-vista-historial').addEventListener('click', () => switchView('historial'));
+            
+            // Event listener for the new checkbox
+            document.getElementById('incluir-clientes-reporte').addEventListener('change', async (event) => {
+                userSettings.includeClientDetailsInReport = event.target.checked;
+                await saveSetting('user_preferences', userSettings);
+            });
+        });
+    </script>
+</body>
+</html>
